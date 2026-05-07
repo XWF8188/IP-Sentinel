@@ -31,7 +31,7 @@ RSS_FEEDS = {
     "NL": ["https://feeds.nos.nl/nosnieuwsalgemeen"],
     "VN": ["https://vnexpress.net/rss/tin-moi-nhat.rss"],
     "MY": ["https://news.google.com/rss?hl=en-MY&gl=MY&ceid=MY:en"],
-    "NG": ["https://punchng.com/feed/", "https://guardian.ng/feed/"],
+    "NG": ["https://punchng.com/feed/", "https://www.vanguardngr.com/feed/"],
     "TR": ["https://www.hurriyet.com.tr/rss/anasayfa"]
 }
 
