@@ -157,6 +157,23 @@
             } 
           ] 
         },
+        { 
+          "id": "MN", 
+          "name": "Mongolia (蒙古)", 
+          "keyword_file": "kw_MN.txt", 
+          "states": [
+            { 
+              "id": "Default", 
+              "name": "Default State", 
+              "cities": [
+                { 
+                  "id": "Ulaanbaatar", 
+                  "name": "Ulaanbaatar (乌兰巴托)" 
+                } 
+              ] 
+            } 
+          ] 
+        },
         {
           "id": "KR",
           "name": "South Korea (韩国)",
