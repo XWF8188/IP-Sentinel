@@ -32,7 +32,20 @@ RSS_FEEDS = {
     "VN": ["https://vnexpress.net/rss/tin-moi-nhat.rss"],
     "MY": ["https://news.google.com/rss?hl=en-MY&gl=MY&ceid=MY:en"],
     "NG": ["https://punchng.com/feed/", "https://www.vanguardngr.com/feed/"],
-    "TR": ["https://www.hurriyet.com.tr/rss/anasayfa"]
+    "TR": ["https://www.hurriyet.com.tr/rss/anasayfa"],
+    # ====== 下方为 PR #47 亚洲与中东新战区扩充源 ======
+    "PH": ["https://www.gmanetwork.com/news/rss/news/"],
+    "TH": ["https://www.bangkokpost.com/rss/data/topstories.xml"],
+    "ID": ["https://www.antaranews.com/rss/terkini.xml"],
+    "IN": ["https://timesofindia.indiatimes.com/rssfeedstopstories.cms"],
+    "AE": ["https://gulfnews.com/arc/outboundfeeds/rss/uae.xml"],
+    "SA": ["https://www.arabnews.com/rss.xml"],
+    "BD": ["https://www.thedailystar.net/frontpage/rss.xml"],
+    "NP": ["https://kathmandupost.com/feed/"],
+    "KH": ["https://www.khmertimeskh.com/feed/"],
+    "MM": ["https://www.irrawaddy.com/feed"],
+    "LA": ["kpl.gov.la/Rss"],
+    "MN": ["https://montsame.mn/en/rss"]
 }
 
 def fetch_rss_links(region_code, max_items=15):
