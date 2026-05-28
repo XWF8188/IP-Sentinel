@@ -147,40 +147,46 @@ for ((i=1; i<=TOTAL_ACTIONS; i++)); do
     ACTION_LON=$(get_random_coord $SESSION_BASE_LON 1)
     
     RAND_KEY=${KEYWORDS[$RANDOM % ${#KEYWORDS[@]}]}
-    ENCODED_KEY=$(echo "$RAND_KEY" | jq -sRr @uri)
+    # [v4.1.3 修复] 使用 printf '%s' 替换 echo，彻底抹除 URL 末尾自带的 %0A (换行符) 机器爬虫特征
+    ENCODED_KEY=$(printf '%s' "$RAND_KEY" | jq -sRr @uri 2>/dev/null)
+    [ -z "$ENCODED_KEY" ] && ENCODED_KEY="google"
     
     # [动作轮盘] 随机指派单次行为类型
     ACTION_TYPE=$((1 + RANDOM % 4))
+    TARGET_URL=""
     
-    # [协议挂载] 注入双栈与网卡死锁参数
-    # [v4.1.2] 挂载持久化 Cookie (-b -c)，确立连续会话画像
+    # [v4.1.3 修复] 剥离冗余的 curl 载荷，将目标 URL 统一抽离
     case $ACTION_TYPE in
-        1) # 搜索引擎交互
-            CODE=$(curl $CURL_BIND_OPT $DYNAMIC_IP_PREF -m 15 -s -L -o /dev/null -w "%{http_code}" \
-                 -b "$COOKIE_FILE" -c "$COOKIE_FILE" -A "$SESSION_UA" \
-                 "https://www.google.com/search?q=${ENCODED_KEY}&${LANG_PARAMS}")
-            ;;
-        2) # 区域新闻阅读
-            CODE=$(curl $CURL_BIND_OPT $DYNAMIC_IP_PREF -m 15 -s -L -o /dev/null -w "%{http_code}" \
-                 -b "$COOKIE_FILE" -c "$COOKIE_FILE" -A "$SESSION_UA" \
-                 "https://news.google.com/home?${LANG_PARAMS}")
-            ;;
-        3) # 坐标系 LBS 查询
-            CODE=$(curl $CURL_BIND_OPT $DYNAMIC_IP_PREF -m 15 -s -o /dev/null -w "%{http_code}" \
-                 -b "$COOKIE_FILE" -c "$COOKIE_FILE" -A "$SESSION_UA" \
-                 "https://www.google.com/maps/search/$${ENCODED_KEY}/@${ACTION_LAT},${ACTION_LON},17z?${LANG_PARAMS}")
-            ;;
-        4) # 底层系统级网络探测连通性握手
-            CODE=$(curl $CURL_BIND_OPT $DYNAMIC_IP_PREF -m 10 -s -o /dev/null -w "%{http_code}" \
-                 -b "$COOKIE_FILE" -c "$COOKIE_FILE" -A "$SESSION_UA" \
-                 "https://connectivitycheck.gstatic.com/generate_204")
-            ;;
+        1) TARGET_URL="https://www.google.com/search?q=${ENCODED_KEY}&${LANG_PARAMS}" ;;
+        2) TARGET_URL="https://news.google.com/home?${LANG_PARAMS}" ;;
+        3) TARGET_URL="https://www.google.com/maps/search/$${ENCODED_KEY}/@${ACTION_LAT},${ACTION_LON},17z?${LANG_PARAMS}" ;;
+        4) TARGET_URL="https://connectivitycheck.gstatic.com/generate_204" ;;
     esac
     
-    log "$MODULE_NAME" "EXEC " "动作[$i/$TOTAL_ACTIONS]完成 | HTTP状态: $CODE | 抖动坐标: $ACTION_LAT, $ACTION_LON"
+    # [v4.1.3 修复] 统一执行 curl，并精准捕获底层网络错误码 (防 CODE 空值塌陷)
+    CODE=$(curl $CURL_BIND_OPT $DYNAMIC_IP_PREF -m 15 -s -L -o /dev/null -w "%{http_code}" \
+         -b "$COOKIE_FILE" -c "$COOKIE_FILE" -A "$SESSION_UA" "$TARGET_URL")
+    CURL_EXIT=$?
     
-    # [行为拉伸] 动作间隔注入泊松长尾睡眠，模拟人类真实阅读思考时间
+    # 错误码精准映射（不破坏原有的 SCORE 送中判定，只让动作日志更清晰）
+    if [ $CURL_EXIT -ne 0 ]; then
+        case $CURL_EXIT in
+            6)  CODE="ERR_DNS" ;;
+            7)  CODE="ERR_CONN" ;;
+            28) CODE="ERR_TIMEOUT" ;;
+            35) CODE="ERR_TLS" ;;
+            56) CODE="ERR_RESET" ;;
+            *)  CODE="ERR_${CURL_EXIT}" ;;
+        esac
+        log "$MODULE_NAME" "WARN " "动作[$i/$TOTAL_ACTIONS]异常 | 底层错误: $CODE | 抖动坐标: $ACTION_LAT, $ACTION_LON"
+    else
+        log "$MODULE_NAME" "EXEC " "动作[$i/$TOTAL_ACTIONS]完成 | HTTP状态: $CODE | 抖动坐标: $ACTION_LAT, $ACTION_LON"
+    fi
+    
+    # 【核心升级】行为拉伸：每次动作后强制休眠 90 - 120 秒
+    # 结合动作总数，总耗时将稳定在 10 分钟 到 20 分钟之间
     if [ $i -lt $TOTAL_ACTIONS ]; then
+        # 【时间收敛修复】休眠控制在 45-75 秒，防止跨周期重叠导致进程被强杀
         SLEEP_TIME=$((45 + RANDOM % 31))
         log "$MODULE_NAME" "WAIT " "阅读当前页面内容，模拟停留 $SLEEP_TIME 秒..."
         sleep $SLEEP_TIME
