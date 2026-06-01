@@ -82,6 +82,34 @@ generate_signed_url() {
     echo "https://${target_ip}:${target_port}${action_path}?t=${current_t}&sign=${signature}"
 }
 
+# ==========================================================
+# [新增插入] v4.2.2 终极容灾火力网：自动解析多宿主 IP 并执行无缝降级重试
+# ==========================================================
+call_agent() {
+    local ips="$1"
+    local port="$2"
+    local path="$3"
+    local suffix="$4"
+    local res="FAILED"
+    
+    # 将长串中的下划线统一洗回逗号，确保万无一失的弹匣拆解
+    local clean_ips=$(echo "$ips" | tr '_' ',')
+    IFS=',' read -r -a ip_array <<< "$clean_ips"
+    for ip in "${ip_array[@]}"; do
+        if [ -n "$ip" ]; then
+            local url=$(generate_signed_url "$ip" "$port" "$path")
+            [ -n "$suffix" ] && url="${url}${suffix}"
+            
+            # 缩短单次重试时间，实现用户无感知的秒级降级切换
+            res=$(curl -k -s --connect-timeout 4 -m 12 "$url" || echo "FAILED")
+            if [ "$res" != "FAILED" ] && [ -n "$res" ]; then
+                echo "$res"
+                return
+            fi
+        fi
+    done
+    echo "FAILED"
+}
 
 # ==========================================================
 # 2. 数据库热升级自愈系统
@@ -217,7 +245,7 @@ while true; do
                 CHAT_ID=$(echo "$CHAT_ID" | tr -cd '0-9-')
                 AGENT_REGION=$(echo "$RAW_REGION" | tr -cd 'a-zA-Z0-9' | cut -c 1-10)
                 NODE_NAME=$(echo "$RAW_NODE" | tr -cd 'a-zA-Z0-9_.-' | cut -c 1-30)
-                AGENT_IP=$(echo "$RAW_IP" | tr -cd 'a-zA-Z0-9.:\[\]-' | cut -c 1-50)
+                AGENT_IP=$(echo "$RAW_IP" | tr -cd 'a-zA-Z0-9.:\[\]-_,' | cut -c 1-150)
                 AGENT_PORT=$(echo "$RAW_PORT" | tr -cd '0-9' | cut -c 1-5)
                 NODE_ALIAS=$(echo "$RAW_ALIAS" | tr -d '"'\''\`\$\|&;<>\n\r' | cut -c 1-30)
                 [ -z "$NODE_ALIAS" ] && NODE_ALIAS="$NODE_NAME"
@@ -235,8 +263,19 @@ while true; do
                     continue
                 fi
 
+                # [v4.2.2 容灾对齐] 允许 agent_ip 字段以逗号分隔的形式完整固化多路由通道
                 db_exec "INSERT INTO nodes (chat_id, node_name, agent_ip, agent_port, last_seen, region, node_alias, enable_ota) VALUES ('$CHAT_ID', '$NODE_NAME', '$AGENT_IP', '$AGENT_PORT', CURRENT_TIMESTAMP, '$AGENT_REGION', '$NODE_ALIAS', '$AGENT_OTA') ON CONFLICT(chat_id, node_name) DO UPDATE SET agent_ip='$AGENT_IP', agent_port='$AGENT_PORT', last_seen=CURRENT_TIMESTAMP, region='$AGENT_REGION', node_alias='$NODE_ALIAS', enable_ota='$AGENT_OTA';"
-                send_msg "$CHAT_ID" "✅ **司令部确认 (v${MASTER_VERSION})**%0A节点 \`${NODE_ALIAS}\` 档案已录入！"
+                
+                # 统一将下划线替换为逗号，再进行格式化输出，兼容您的所有测试版本
+                FMT_AGENT_IP=$(echo "$AGENT_IP" | tr '_' ',')
+                MAIN_SHOW_IP=$(echo "$FMT_AGENT_IP" | cut -d',' -f1)
+                BACKUP_SHOW_IP=$(echo "$FMT_AGENT_IP" | cut -d',' -f2-)
+                if [ -n "$BACKUP_SHOW_IP" ]; then
+                    SHOW_MSG="✅ **司令部确认 (v${MASTER_VERSION})**%0A节点 \`${NODE_ALIAS}\` 档案已录入！%0A🌐 主通讯：\`${MAIN_SHOW_IP}\`%0A📡 容灾备用：\`${BACKUP_SHOW_IP}\`"
+                else
+                    SHOW_MSG="✅ **司令部确认 (v${MASTER_VERSION})**%0A节点 \`${NODE_ALIAS}\` 档案已录入！%0A🌐 通讯 IP：\`${MAIN_SHOW_IP}\`"
+                fi
+                send_msg "$CHAT_ID" "$SHOW_MSG"
                 
                 REGION_DATA=$(db_exec "SELECT region, COUNT(*) FROM nodes WHERE chat_id='$CHAT_ID' GROUP BY region;")
                 if [ -n "$REGION_DATA" ]; then
@@ -298,8 +337,7 @@ while true; do
                     else
                         send_msg "$CHAT_ID" "📢 **司令部指令下达：正在唤醒全舰队执行 OTA 升级...**%0A*(节点升级成功后会主动发回新的入库确认，请注意查收)*"
                         echo "$NODE_DATA" | while IFS='|' read -r NNAME AIP APORT; do
-                            TARGET_URL=$(generate_signed_url "$AIP" "$APORT" "/trigger_ota")
-                            curl -k -s --connect-timeout 5 -m 15 "$TARGET_URL" > /dev/null &
+                            call_agent "$AIP" "$APORT" "/trigger_ota" > /dev/null &
                             sleep 0.3
                         done
                     fi
@@ -353,8 +391,7 @@ while true; do
                     else
                         send_msg "$CHAT_ID" "📢 **司令部指令下达：正在召唤所有哨兵回传简报...**%0A*(为防止触发 TG 官方限流，简报将排队依次送达，请耐心等待)*"
                         echo "$NODE_DATA" | while IFS='|' read -r NNAME AIP APORT; do
-                            TARGET_URL=$(generate_signed_url "$AIP" "$APORT" "/trigger_report")
-                            curl -k -s --connect-timeout 5 -m 15 "$TARGET_URL" > /dev/null &
+                            call_agent "$AIP" "$APORT" "/trigger_report" > /dev/null &
                             sleep 2  
                         done
                     fi
@@ -367,8 +404,7 @@ while true; do
                     else
                         send_msg "$CHAT_ID" "📢 **司令部指令下达：正在唤醒所有哨兵执行系统维护...**"
                         echo "$NODE_DATA" | while IFS='|' read -r NNAME AIP APORT; do
-                            TARGET_URL=$(generate_signed_url "$AIP" "$APORT" "/trigger_run")
-                            curl -k -s --connect-timeout 5 -m 15 "$TARGET_URL" > /dev/null &
+                            call_agent "$AIP" "$APORT" "/trigger_run" > /dev/null &
                             sleep 0.2  
                         done
                     fi
@@ -389,8 +425,7 @@ while true; do
                         if [ -n "$AGENT_IP" ] && [ -n "$AGENT_PORT" ]; then
                             send_msg "$CHAT_ID" "⏳ 正在向 \`$TARGET_NODE\` ($AGENT_IP) 下发 [quality] 指令，请稍候..."
                             
-                            TARGET_URL=$(generate_signed_url "$AGENT_IP" "$AGENT_PORT" "/trigger_quality")
-                            RESPONSE=$(curl -k -s --connect-timeout 5 -m 15 "$TARGET_URL" || echo "FAILED")
+                            RESPONSE=$(call_agent "$AGENT_IP" "$AGENT_PORT" "/trigger_quality")
                             
                             if [ "$RESPONSE" == "FAILED" ]; then
                                 send_msg "$CHAT_ID" "❌ 指令下发超时或失败！请检查节点公网 IP 或防火墙端口 ($AGENT_PORT) 是否放行。"
@@ -540,10 +575,7 @@ while true; do
                     AGENT_PORT=$(echo "$AGENT_INFO" | cut -d'|' -f2)
                     
                     if [ -n "$AGENT_IP" ] && [ -n "$AGENT_PORT" ]; then
-                        TARGET_URL=$(generate_signed_url "$AGENT_IP" "$AGENT_PORT" "/trigger_toggle")
-                        TARGET_URL="${TARGET_URL}&mod=${MOD_NAME}&state=${TARGET_STATE}"
-                        
-                        RESPONSE=$(curl -k -s --connect-timeout 5 -m 15 "$TARGET_URL" || echo "FAILED")
+                        RESPONSE=$(call_agent "$AGENT_IP" "$AGENT_PORT" "/trigger_toggle" "&mod=${MOD_NAME}&state=${TARGET_STATE}")
                         
                         if [[ "$RESPONSE" == *"Action Accepted"* ]]; then
                             db_exec "UPDATE nodes SET enable_${MOD_NAME}='$TARGET_STATE' WHERE chat_id='$CHAT_ID' AND node_name='$TARGET_NODE';"
@@ -635,13 +667,9 @@ while true; do
                     if [ -n "$AGENT_IP" ] && [ -n "$AGENT_PORT" ]; then
                         send_msg "$CHAT_ID" "⏳ 正在向 \`$TARGET_NODE\` 下发重命名指令，正在建立加密隧道..."
                         
-                        TARGET_URL=$(generate_signed_url "$AGENT_IP" "$AGENT_PORT" "/trigger_rename")
-                        
                         # [防线穿越] 借由 Base64 编码对下发特征进行混淆与防篡改护甲加持
                         ALIAS_B64=$(echo -n "$NEW_ALIAS" | base64 | tr -d '\n' | tr '+/' '-_')
-                        TARGET_URL="${TARGET_URL}&b64=${ALIAS_B64}"
-                        
-                        RESPONSE=$(curl -k -s --connect-timeout 5 -m 15 "$TARGET_URL" || echo "FAILED")
+                        RESPONSE=$(call_agent "$AGENT_IP" "$AGENT_PORT" "/trigger_rename" "&b64=${ALIAS_B64}")
                         
                         if [ "$RESPONSE" == "FAILED" ]; then
                             send_msg "$CHAT_ID" "❌ 指令下发超时！为防范劫持风险，已终止请求。"
@@ -670,6 +698,7 @@ while true; do
                     AGENT_IP=$(echo "$AGENT_INFO" | cut -d'|' -f1)
                     AGENT_PORT=$(echo "$AGENT_INFO" | cut -d'|' -f2)
 
+                    # [修正点] 必须保留这层外壳判断
                     if [ -n "$AGENT_IP" ] && [ -n "$AGENT_PORT" ]; then
                         if [ -n "$MSG_ID" ]; then
                             edit_msg "$CHAT_ID" "$MSG_ID" "⏳ 正在向 \`$TARGET_NODE\` 发送 OTA 触发报文..."
@@ -677,8 +706,7 @@ while true; do
                             send_msg "$CHAT_ID" "⏳ 正在向 \`$TARGET_NODE\` 发送 OTA 触发报文..."
                         fi
                         
-                        TARGET_URL=$(generate_signed_url "$AGENT_IP" "$AGENT_PORT" "/trigger_ota")
-                        RESPONSE=$(curl -k -s --connect-timeout 5 -m 15 "$TARGET_URL" || echo "FAILED")
+                        RESPONSE=$(call_agent "$AGENT_IP" "$AGENT_PORT" "/trigger_ota")
                         
                         if [ "$RESPONSE" == "FAILED" ]; then
                             TEXT_RES="❌ OTA 指令下发彻底失败！链路异常或严禁使用 HTTP 降级通讯。"
@@ -707,6 +735,7 @@ while true; do
                     AGENT_IP=$(echo "$AGENT_INFO" | cut -d'|' -f1)
                     AGENT_PORT=$(echo "$AGENT_INFO" | cut -d'|' -f2)
 
+                    # [修正点] 必须保留这层外壳判断
                     if [ -n "$AGENT_IP" ] && [ -n "$AGENT_PORT" ]; then
                         if [ -n "$MSG_ID" ]; then
                             edit_msg "$CHAT_ID" "$MSG_ID" "⏳ 正在向 \`$TARGET_NODE\` ($AGENT_IP) 下发 [$ACTION_TYPE] 指令，请稍候..."
@@ -714,8 +743,7 @@ while true; do
                             send_msg "$CHAT_ID" "⏳ 正在向 \`$TARGET_NODE\` ($AGENT_IP) 下发 [$ACTION_TYPE] 指令，请稍候..."
                         fi
                         
-                        TARGET_URL=$(generate_signed_url "$AGENT_IP" "$AGENT_PORT" "/trigger_${ACTION_TYPE}")
-                        RESPONSE=$(curl -k -s --connect-timeout 5 -m 15 "$TARGET_URL" || echo "FAILED")
+                        RESPONSE=$(call_agent "$AGENT_IP" "$AGENT_PORT" "/trigger_${ACTION_TYPE}")
                         
                         if [ "$RESPONSE" == "FAILED" ]; then
                             TEXT_RES="❌ 指令下发超时或失败！为保护链路安全，已终止通信 (严禁降级为 HTTP)。"
