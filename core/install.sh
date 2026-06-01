@@ -415,8 +415,25 @@ if [ "$UPGRADE_MODE" == "false" ]; then
     # ----------------------------------------------------------
     echo -e "\n\033[36m[4.5/7] 正在探测本机网络栈与可用出口 (多节点雷达扫描中)...\033[0m"
 
-    DETECT_V4=$( (curl -4 -s -m 3 api.ip.sb/ip || curl -4 -s -m 3 ifconfig.me || curl -4 -s -m 3 ipv4.icanhazip.com) 2>/dev/null | grep -E "^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+" | head -n 1 | tr -d '[:space:]')
-    DETECT_V6=$( (curl -6 -s -m 3 api.ip.sb/ip || curl -6 -s -m 3 ifconfig.me || curl -6 -s -m 3 ipv6.icanhazip.com) 2>/dev/null | grep -E "^[0-9a-fA-F:]+.*:" | head -n 1 | tr -d '[:space:]')
+    RAW_DETECT_V4=$( (curl -4 -s -m 3 api.ip.sb/ip || curl -4 -s -m 3 ifconfig.me || curl -4 -s -m 3 ipv4.icanhazip.com) 2>/dev/null | grep -E "^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+" | head -n 1 | tr -d '[:space:]')
+    RAW_DETECT_V6=$( (curl -6 -s -m 3 api.ip.sb/ip || curl -6 -s -m 3 ifconfig.me || curl -6 -s -m 3 ipv6.icanhazip.com) 2>/dev/null | grep -E "^[0-9a-fA-F:]+.*:" | head -n 1 | tr -d '[:space:]')
+
+    # [v4.2.1 源头防线] 剔除 WARP 伪装 IP (如 104.28.x.x) 及各类云服务商大内网/CGNAT 保留段
+    # 防止纯 v6 机器开启 WARP v4 后，错误将代理 IP 当作入站网卡，导致双轨架构及端口监听彻底崩溃
+    DETECT_V4=""
+    if [[ -n "$RAW_DETECT_V4" ]] && \
+       ! [[ "$RAW_DETECT_V4" =~ ^104\.28\. ]] && \
+       ! [[ "$RAW_DETECT_V4" =~ ^10\.|^192\.168\.|^172\.(1[6-9]|2[0-9]|3[0-1])\.|^100\.(6[4-9]|[7-9][0-9]|1[0-1][0-9]|12[0-7])\. ]]; then
+        DETECT_V4="$RAW_DETECT_V4"
+    elif [[ -n "$RAW_DETECT_V4" ]]; then
+        echo -e " \033[33m⚠️ 雷达警告: 发现异常 IPv4 出口 ($RAW_DETECT_V4)，疑似 WARP/NAT 代理，已从通讯候选池中隔离。\033[0m"
+    fi
+
+    # [容灾] v6 也做最基础的本地链路段拦截 (极少发生，兜底防御)
+    DETECT_V6=""
+    if [[ -n "$RAW_DETECT_V6" ]] && ! [[ "$RAW_DETECT_V6" =~ ^fe80:|^::1 ]]; then
+        DETECT_V6="$RAW_DETECT_V6"
+    fi
 
     IP_OPTIONS=()
     IP_PROTO=()
