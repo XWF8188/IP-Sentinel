@@ -455,6 +455,16 @@
                   "name": "Berlin (柏林)"
                 }
               ]
+            },
+            {
+              "id": "NW",
+              "name": "North Rhine-Westphalia (北莱茵-威斯特法伦州)",
+              "cities": [
+                {
+                  "id": "Aachen",
+                  "name": "Aachen (亚琛)"
+                }
+              ]
             }
           ]
         },
