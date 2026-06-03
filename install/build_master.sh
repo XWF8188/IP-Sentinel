@@ -1,15 +1,17 @@
 #!/bin/bash
 # ==========================================================
 # 模块名称: build_master.sh (v4.3.0 Orchestrator)
-# 核心功能: Master 安装业务总指挥
+# 核心功能: Master 安装业务总指挥，按原版时序复用组件
 # ==========================================================
 
+# 传递中断引信
+trap 'exit 1' INT QUIT TERM
+
+# Master 仅需要复用 env_setup 和专属的 master_setup
 MODULES=(
     "env_setup.sh"
     "master_setup.sh"
 )
-
-echo "⏳ 正在装载中枢底层设施依赖..."
 
 for mod in "${MODULES[@]}"; do
     curl -fsSL --connect-timeout 10 --retry 3 "${REPO_RAW_URL}/install/${mod}" -o "${SECURE_TMP}/${mod}"
@@ -20,21 +22,21 @@ for mod in "${MODULES[@]}"; do
     source "${SECURE_TMP}/${mod}"
 done
 
-echo -e "\033[32m✅ 中枢模块装载完毕，正在进入部署流程...\033[0m"
-
-# --- 核心业务编排流 ---
+# ==========================================================
+# 核心业务原子流 (100% 忠实于原版 install_master.sh 执行时序)
+# ==========================================================
 
 # [复用模块: env_setup.sh]
-do_master_env_precheck   # 预检
+do_master_env_precheck   # 预检 (复用了与 Agent 相同逻辑但修改了提示语，见下方)
 do_fetch_master_version  # 抓取版本
-do_master_handle_menu    # OTA 拦截与菜单选择
-do_install_deps          # 安装 sqlite3 等依赖
-
-# 如果选择卸载，模块内部会 exit
+do_master_handle_menu    # 拦截指令或展示交互菜单
+do_install_deps          # [复用 Agent] 多分支依赖安装
 
 # [专属模块: master_setup.sh]
-do_master_clean_env      # 验证环境与保护 DB
-do_master_config         # 交互获取 Token 并生成 conf
-do_master_init_db        # 初始化 SQLite 表结构
-do_master_deploy_core    # 覆写内核并注入守护进程
-do_master_summary        # 打印状态汇报与回执
+do_master_clean_env      # 环境清理
+do_master_config         # 令牌收集与 conf 生成
+do_master_init_db        # SQLite 表结构固化
+do_master_deploy_core    # 覆写内核、守护进程注入
+do_master_summary        # 态势汇报与回执
+
+exit 0

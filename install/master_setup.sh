@@ -4,24 +4,34 @@
 # 核心功能: Master 环境清洗、令牌交互、SQLite 建库、守护进程注入与结果呈现
 # ==========================================================
 
-# ----------------------------------------------------------
-# [时序 M.1] 解析版本锚点 (复用/补充)
-# ----------------------------------------------------------
+# 预检部分需要单独定制，因为 Master 有专属横幅
+do_master_env_precheck() {
+    echo -e "\n======================================"
+    echo -e "📊 \033[36mIP-Sentinel 中枢靶机环境侦测\033[0m"
+    echo -e "--------------------------------------"
+    echo -e "OS 架构   : $(get_os_info)"
+    echo -e "虚拟化    : $(get_virt_info)"
+    if is_systemd; then
+        echo -e "Init 系统 : systemd ✅"
+    else
+        echo -e "Init 系统 : 非 systemd ⚠️ (将自动降维至看门狗模式)"
+    fi
+    echo -e "======================================\n"
+    sleep 1
+}
+
 do_fetch_master_version() {
     TARGET_VERSION=$( (curl -fsSL --connect-timeout 5 --retry 2 "${REPO_RAW_URL}/version.txt" || curl -4 -fsSL --connect-timeout 5 --retry 2 "${REPO_RAW_URL}/version.txt") 2>/dev/null | grep "^MASTER_VERSION=" | cut -d'=' -f2 | tr -d '[:space:]')
     TARGET_VERSION=${TARGET_VERSION:-"4.0.7"}
-    
+
     MASTER_DIR="/opt/ip_sentinel_master"
     DB_FILE="${MASTER_DIR}/sentinel.db"
-    
+
     echo "========================================================"
     echo "      🧠 欢迎使用 IP-Sentinel Master (控制中枢) v${TARGET_VERSION}"
     echo "========================================================"
 }
 
-# ----------------------------------------------------------
-# [时序 M.2] 拦截交互菜单 / OTA 静默重载判定
-# ----------------------------------------------------------
 do_master_handle_menu() {
     if [ "$SILENT_MASTER_OTA" == "true" ]; then
         echo -e "\n⏳ [OTA] 中枢重构指令已确认，正在剥离控制台交互..."
@@ -56,7 +66,6 @@ do_master_handle_menu() {
             exit 0
         fi
 
-        # [态势传承] 平滑接管探查并保护库文件
         UPGRADE_MODE="false"
         KEEP_DB="true"
 
@@ -86,9 +95,6 @@ do_master_handle_menu() {
     fi
 }
 
-# ----------------------------------------------------------
-# [时序 M.3] 环境清洗
-# ----------------------------------------------------------
 do_master_clean_env() {
     echo -e "\n⏳ 正在验证本地环境与数据..."
 
@@ -105,9 +111,6 @@ do_master_clean_env() {
     mkdir -p "$MASTER_DIR"
 }
 
-# ----------------------------------------------------------
-# [时序 M.4] 配置总线与交互
-# ----------------------------------------------------------
 do_master_config() {
     if [ "$UPGRADE_MODE" == "false" ]; then
         echo -e "\n[2/4] 配置控制中枢机器人:"
@@ -137,7 +140,6 @@ do_master_config() {
             fi
         fi
 
-        # [中枢身份生成] 提取宿主特征生成全局唯一标识
         MASTER_IP=$( (curl -4 -s -m 3 api.ip.sb/ip || curl -4 -s -m 3 ifconfig.me) 2>/dev/null | tr -d '[:space:]' )
         MASTER_HASH=$(echo "${MASTER_IP:-127.0.0.1}" | md5sum | cut -c 1-4 | tr 'a-z' 'A-Z')
         MASTER_NODE="$(hostname | tr -cd 'a-zA-Z0-9' | cut -c 1-10)-${MASTER_HASH}"
@@ -173,7 +175,6 @@ EOF
         if ! grep -q "^ENABLE_MASTER_OTA=" "${MASTER_DIR}/master.conf"; then
             echo "ENABLE_MASTER_OTA=\"false\"" >> "${MASTER_DIR}/master.conf"
         fi
-        # [热修复] 为老版本司令部平滑补齐中枢标识
         if ! grep -q "^MASTER_NODE_NAME=" "${MASTER_DIR}/master.conf"; then
             MASTER_IP=$( (curl -4 -s -m 3 api.ip.sb/ip || curl -4 -s -m 3 ifconfig.me) 2>/dev/null | tr -d '[:space:]' )
             MASTER_HASH=$(echo "${MASTER_IP:-127.0.0.1}" | md5sum | cut -c 1-4 | tr 'a-z' 'A-Z')
@@ -183,9 +184,6 @@ EOF
     fi
 }
 
-# ----------------------------------------------------------
-# [时序 M.5] 初始化 SQLite
-# ----------------------------------------------------------
 do_master_init_db() {
     echo -e "\n[3/4] 正在初始化 SQLite 数据库表结构..."
     sqlite3 "$DB_FILE" <<EOF
@@ -214,14 +212,10 @@ CREATE TABLE IF NOT EXISTS ip_trend_log (
 );
 EOF
     echo "✅ 数据库创建成功: $DB_FILE"
-
     chmod 600 "${MASTER_DIR}/master.conf"
     chmod 600 "$DB_FILE"
 }
 
-# ----------------------------------------------------------
-# [时序 M.6] 防变砖双缓冲下载与守护进程注入
-# ----------------------------------------------------------
 do_master_deploy_core() {
     echo -e "\n[4/4] 正在拉取新版司令部核心引擎..."
 
@@ -284,16 +278,12 @@ EOF
     fi
 }
 
-# ----------------------------------------------------------
-# [时序 M.7] 结束横幅与回执
-# ----------------------------------------------------------
 do_master_summary() {
     echo "========================================================"
     if [ "$UPGRADE_MODE" == "true" ]; then
         echo "🎉 Master 控制中枢平滑热更新完成！"
         echo "🤖 新版中枢引擎已接管数据库，继续等待边缘节点汇报。"
         
-        # 幽灵态静默 OTA 完毕后执行回叫汇报
         if [ "$SILENT_MASTER_OTA" == "true" ] && [ -n "$OTA_CHAT_ID" ] && [ -n "$TG_TOKEN" ]; then
             echo -e "\n📡 正在向指挥官发送司令部重构捷报..."
             curl -s -X POST "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
