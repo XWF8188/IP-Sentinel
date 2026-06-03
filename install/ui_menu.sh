@@ -5,6 +5,20 @@
 # ==========================================================
 
 # ----------------------------------------------------------
+# [基础设施] 防污染终端输入函数 (防 curl|bash 管道流截断)
+# ----------------------------------------------------------
+safe_read() {
+    local prompt="$1"
+    local var_name="$2"
+    
+    # 强行抽干终端缓冲区内的残留垃圾数据
+    read -t 0.01 -n 10000 discard_buffer < /dev/tty 2>/dev/null || true
+    
+    # 执行真正的读取
+    safe_read "$prompt" "$var_name" 
+}
+
+# ----------------------------------------------------------
 # [时序 4] 拉取全球节点地图
 # ----------------------------------------------------------
 do_fetch_map() {
@@ -30,7 +44,7 @@ do_handle_menu() {
         echo -e "\n请选择操作:"
         echo "  1) 🚀 部署边缘节点 (进入全球节点配置)"
         echo "  2) 🗑️ 一键卸载 IP-Sentinel"
-        read -p "请输入选择 [1-2] (默认1): " ACTION_CHOICE < /dev/tty
+        safe_read "请输入选择 [1-2] (默认1): " ACTION_CHOICE 
 
         ACTION_CHOICE=${ACTION_CHOICE:-1}
 
@@ -49,10 +63,10 @@ do_handle_menu() {
 
         if [ "$ACTION_CHOICE" == "1" ] && [ -f "$CONFIG_FILE" ]; then
             echo -e "\n\033[33m💡 哨兵雷达提示：检测到本机已部署过 IP-Sentinel。\033[0m"
-            read -p "👉 是否按原配置直接进行平滑升级？(y/n, 默认y): " UPGRADE_CHOICE < /dev/tty
+            safe_read "👉 是否按原配置直接进行平滑升级？(y/n, 默认y): " UPGRADE_CHOICE 
             if [[ -z "$UPGRADE_CHOICE" || "$UPGRADE_CHOICE" =~ ^[Yy]$ ]]; then
                 UPGRADE_MODE="true"
-                read -p "👉 是否保留历史运行日志？(y/n, 默认y): " LOG_CHOICE < /dev/tty
+                safe_read "👉 是否保留历史运行日志？(y/n, 默认y): " LOG_CHOICE 
                 if [[ "$LOG_CHOICE" =~ ^[Nn]$ ]]; then
                     KEEP_LOGS="false"
                 fi
@@ -81,7 +95,7 @@ do_interactive_setup() {
             ((i++))
         done < "${SECURE_TMP}/continents.txt"
 
-        read -p "请输入选择 [1-$((i-1))] (默认1): " CONT_SEL < /dev/tty
+        safe_read "请输入选择 [1-$((i-1))] (默认1): " CONT_SEL 
         CONT_SEL=${CONT_SEL:-1}
         CONT_ID="${CONT_MAP[$CONT_SEL]}"
 
@@ -95,7 +109,7 @@ do_interactive_setup() {
             ((i++))
         done < "${SECURE_TMP}/countries.txt"
 
-        read -p "请输入选择 [1-$((i-1))] (默认1): " C_SEL < /dev/tty
+        safe_read "请输入选择 [1-$((i-1))] (默认1): " C_SEL 
         C_SEL=${C_SEL:-1}
         COUNTRY_ID="${COUNTRY_MAP[$C_SEL]}"
         KEYWORD_FILE="${KEYWORD_MAP[$C_SEL]}"
@@ -115,7 +129,7 @@ do_interactive_setup() {
                 STATE_MAP[$i]="$s_id"
                 ((i++))
             done < "${SECURE_TMP}/states.txt"
-            read -p "请输入选择 [1-$((i-1))] (默认1): " S_SEL < /dev/tty
+            safe_read "请输入选择 [1-$((i-1))] (默认1): " S_SEL 
             S_SEL=${S_SEL:-1}
             STATE_ID="${STATE_MAP[$S_SEL]}"
         fi
@@ -135,7 +149,7 @@ do_interactive_setup() {
                 CITY_NAME_MAP[$i]="$c_name"
                 ((i++))
             done < "${SECURE_TMP}/cities.txt"
-            read -p "请输入选择 [1-$((i-1))] (默认1): " CI_SEL < /dev/tty
+            safe_read "请输入选择 [1-$((i-1))] (默认1): " CI_SEL 
             CI_SEL=${CI_SEL:-1}
             CITY_ID="${CITY_MAP[$CI_SEL]}"
             CITY_NAME="${CITY_NAME_MAP[$CI_SEL]}"
@@ -153,7 +167,7 @@ do_interactive_setup() {
         ENABLE_TRUST="true"
 
         echo -e "\n[4/7] 是否接入 Master 司令部进行远程联控？ (y/n)"
-        read -p "请输入选择 [y/n] (默认n): " TG_CHOICE < /dev/tty
+        safe_read "请输入选择 [y/n] (默认n): " TG_CHOICE 
         TG_TOKEN=""
         CHAT_ID=""
         AGENT_PORT="9527"
@@ -161,7 +175,7 @@ do_interactive_setup() {
             echo -e "\n请选择中枢接入模式 (推荐私有部署，支持后续 OTA 远程静默升级):"
             echo "  1) 🛡️ 私有独立中枢 (需提供自建 Bot Token，推荐)"
             echo "  2) ☁️ 官方公共网关 (@OmniBeacon_bot，新手免配置)"
-            read -p "请输入选择 [1-2] (默认1): " MASTER_TYPE < /dev/tty
+            safe_read "请输入选择 [1-2] (默认1): " MASTER_TYPE 
             MASTER_TYPE=${MASTER_TYPE:-1}
             
             if [ "$MASTER_TYPE" == "2" ]; then
@@ -176,10 +190,10 @@ do_interactive_setup() {
             else
                 echo -e "\n\033[36m📘 私有 Bot 创建教程: \033[4m\033]8;;https://blog.iot-architect.com/engineering-practice/create-private-telegram-bot-via-botfather/\033\\👉 [点击此处直接在浏览器中打开]\033]8;;\033\\ 👈\033[0m"
                 echo -e "\033[90m   (若您的终端较老不支持点击，请手动复制: https://blog.iot-architect.com/engineering-practice/create-private-telegram-bot-via-botfather/ )\033[0m"
-                read -p "请输入您的私有 Telegram Bot Token: " RAW_TOKEN < /dev/tty
+                safe_read "请输入您的私有 Telegram Bot Token: " RAW_TOKEN 
                 USER_TOKEN=$(echo "$RAW_TOKEN" | tr -cd 'a-zA-Z0-9_:-')
                 while [ -z "$USER_TOKEN" ]; do
-                    read -p "⚠️ Token 不能为空或包含非法字符，请重新输入: " RAW_TOKEN < /dev/tty
+                    safe_read "⚠️ Token 不能为空或包含非法字符，请重新输入: " RAW_TOKEN 
                     USER_TOKEN=$(echo "$RAW_TOKEN" | tr -cd 'a-zA-Z0-9_:-')
                 done
                 
@@ -189,7 +203,7 @@ do_interactive_setup() {
                 
                 echo -e "\n\033[36m[4.1/7] OTA 远程静默升级授权\033[0m"
                 echo -e "💡 开启后，您可以在 TG 面板一键将本节点热更新至最新版本。"
-                read -p "是否允许本节点接收 OTA 升级指令？(y/n, 默认y): " OTA_CHOICE < /dev/tty
+                safe_read "是否允许本节点接收 OTA 升级指令？(y/n, 默认y): " OTA_CHOICE 
                 if [[ "$OTA_CHOICE" =~ ^[Nn]$ ]]; then
                     ENABLE_OTA="false"
                     echo -e "🛡️ \033[33m已关闭 OTA 权限，本节点未来将只能通过 SSH 手动升级。\033[0m"
@@ -202,7 +216,7 @@ do_interactive_setup() {
             echo -e "\n\033[33m💡 提示：如果您不知道下方自己的 Chat ID 是什么，可以关注 @userinfobot 获取。\033[0m"
             echo -e "\033[36m📘 查看图文教程: \033[4m\033]8;;https://blog.iot-architect.com/engineering-practice/get-telegram-personal-id-via-userinfobot/\033\\👉 [点击此处直接在浏览器中打开]\033]8;;\033\\ 👈\033[0m"
             echo -e "\033[90m   (若您的终端较老不支持点击，请手动复制: https://blog.iot-architect.com/engineering-practice/get-telegram-personal-id-via-userinfobot/ )\033[0m"
-            read -p "请输入你的 Chat ID (必须准确，否则无法联控): " RAW_CHAT_ID < /dev/tty
+            safe_read "请输入你的 Chat ID (必须准确，否则无法联控): " RAW_CHAT_ID 
             CHAT_ID=$(echo "$RAW_CHAT_ID" | tr -cd '0-9-')
             
             echo -e "\n\033[36m[4.2/7] 正在构建 Webhook 安全通信隧道...\033[0m"
@@ -220,7 +234,7 @@ do_interactive_setup() {
             echo -e "\033[33m(该端口已通过本地占用校验，可直接使用)\033[0m"
             
             while true; do
-                read -p "请输入 Webhook 监听端口 (回车采用推荐, 或手动输入): " INPUT_PORT < /dev/tty
+                safe_read "请输入 Webhook 监听端口 (回车采用推荐, 或手动输入): " INPUT_PORT 
                 
                 if [ -z "$INPUT_PORT" ]; then
                     AGENT_PORT="$RANDOM_PORT"
