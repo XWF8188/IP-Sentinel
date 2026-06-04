@@ -69,8 +69,10 @@ do_fetch_version() {
 # [时序 3] 唤醒包管理器，补全战地依赖
 # ----------------------------------------------------------
 do_install_deps() {
-    echo -e "\n[1/7] 正在探测并安装基础环境依赖 (curl, jq, cron, procps, python3)..."
-    REQUIRED_CMDS=("curl" "jq" "crontab" "pgrep" "python3" "openssl")
+    echo -e "\n[1/7] 正在探测并安装基础环境依赖 (curl, jq, cron, procps, python3, sqlite3)..."
+    
+    # [修改点] 将 sqlite3 统一纳入全端基础依赖池
+    REQUIRED_CMDS=("curl" "jq" "crontab" "pgrep" "python3" "openssl" "sqlite3")
     MISSING_CMDS=()
 
     for cmd in "${REQUIRED_CMDS[@]}"; do
@@ -84,7 +86,8 @@ do_install_deps() {
         
         if command -v apt-get >/dev/null 2>&1; then
             apt-get update -y >/dev/null 2>&1
-            apt-get install -y --no-install-recommends curl jq cron procps python3 openssl >/dev/null 2>&1
+            # [修改点] apt-get 阵营追加 sqlite3
+            apt-get install -y --no-install-recommends curl jq cron procps python3 openssl sqlite3 >/dev/null 2>&1
             systemctl enable cron >/dev/null 2>&1 && systemctl start cron >/dev/null 2>&1
             
         elif command -v yum >/dev/null 2>&1 || command -v dnf >/dev/null 2>&1 || command -v microdnf >/dev/null 2>&1; then
@@ -101,28 +104,32 @@ do_install_deps() {
             $PKG_MGR install -y epel-release >/dev/null 2>&1 || true
             
             echo -e "\033[90m   (正在拉取核心组件...)\033[0m"
-            $PKG_MGR install -y $OPT_ARGS curl jq cronie procps-ng python3 openssl
+            # [修改点] RHEL 阵营追加 sqlite
+            $PKG_MGR install -y $OPT_ARGS curl jq cronie procps-ng python3 openssl sqlite
             systemctl enable crond >/dev/null 2>&1 && systemctl start crond >/dev/null 2>&1
             
         elif command -v apk >/dev/null 2>&1; then
             echo "Alpine 探测到系统类型为 Alpine Linux，正在执行轻量级安装..."
-            apk add --no-cache curl jq cronie procps python3 bash openssl || apk add --no-cache curl jq procps python3 bash openssl
+            # [修改点] Alpine 阵营追加 sqlite
+            apk add --no-cache curl jq cronie procps python3 bash openssl sqlite || apk add --no-cache curl jq procps python3 bash openssl sqlite
             mkdir -p /var/spool/cron/crontabs
             rc-update add crond default >/dev/null 2>&1
             service crond start >/dev/null 2>&1
             
         elif command -v pacman >/dev/null 2>&1; then
-            pacman -S --needed --noconfirm curl jq cronie procps-ng python openssl >/dev/null 2>&1
+            # [修改点] Arch 阵营追加 sqlite
+            pacman -S --needed --noconfirm curl jq cronie procps-ng python openssl sqlite >/dev/null 2>&1
             mkdir -p /root/.cache/crontab 2>/dev/null
             systemctl enable cronie >/dev/null 2>&1 && systemctl start cronie >/dev/null 2>&1
             
         else
             echo -e "\033[31m❌ 自动安装失败：系统未知的包管理器。\033[0m"
             echo -e "\033[33m⚠️ 请根据您的操作系统，手动执行以下安装命令后重新运行本脚本：\033[0m"
-            echo -e "  Debian/Ubuntu: \033[36mapt-get update && apt-get install -y --no-install-recommends curl jq cron procps python3 openssl\033[0m"
-            echo -e "  CentOS/RHEL:   \033[36myum install -y curl jq cronie procps-ng python3 openssl\033[0m"
-            echo -e "  Alpine Linux:  \033[36mapk add --no-cache curl jq cronie procps python3 bash openssl\033[0m"
-            echo -e "  Arch Linux:    \033[36mpacman -Syu --needed curl jq cronie procps-ng python openssl\033[0m"
+            # [修改点] 手动提示文案追加 sqlite3/sqlite
+            echo -e "  Debian/Ubuntu: \033[36mapt-get update && apt-get install -y --no-install-recommends curl jq cron procps python3 openssl sqlite3\033[0m"
+            echo -e "  CentOS/RHEL:   \033[36myum install -y curl jq cronie procps-ng python3 openssl sqlite\033[0m"
+            echo -e "  Alpine Linux:  \033[36mapk add --no-cache curl jq cronie procps python3 bash openssl sqlite\033[0m"
+            echo -e "  Arch Linux:    \033[36mpacman -Syu --needed curl jq cronie procps-ng python openssl sqlite\033[0m"
             exit 1
         fi
         
