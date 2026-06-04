@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==========================================================
 # 模块名称: ui_menu.sh
-# 核心功能: 交互式菜单、LBS 地图解析、Telegram 控制中枢配置
+# 核心功能: 交互式状态机、LBS 地图解析、Telegram 控制中枢配置
 # ==========================================================
 
 do_fetch_map() {
@@ -62,74 +62,128 @@ do_handle_menu() {
 do_interactive_setup() {
     if [ "$UPGRADE_MODE" == "false" ]; then
 
-        echo -e "\n\033[36m📍 【第零级】请选择目标战区 (Continent):\033[0m"
-        jq -r '.continents[] | "\(.id)|\(.name)"' "${SECURE_TMP}/map.json" > "${SECURE_TMP}/continents.txt"
-        i=1; CONT_MAP=()
-        while IFS="|" read -r cont_id cont_name; do
-            echo "  $i) $cont_name"
-            CONT_MAP[$i]="$cont_id"
-            ((i++))
-        done < "${SECURE_TMP}/continents.txt"
+        # [v4.3.1 重构] 引入有限状态机 (State Machine) 与输入边界防御
+        local step=0
+        while [ $step -lt 4 ]; do
+            case $step in
+                0)
+                    echo -e "\n\033[36m📍 【第零级】请选择目标战区 (Continent):\033[0m"
+                    jq -r '.continents[] | "\(.id)|\(.name)"' "${SECURE_TMP}/map.json" > "${SECURE_TMP}/continents.txt"
+                    i=1; CONT_MAP=()
+                    while IFS="|" read -r cont_id cont_name; do
+                        echo "  $i) $cont_name"
+                        CONT_MAP[$i]="$cont_id"
+                        ((i++))
+                    done < "${SECURE_TMP}/continents.txt"
 
-        read -p "请输入选择 [1-$((i-1))] (默认1): " CONT_SEL
-        CONT_SEL=${CONT_SEL:-1}
-        CONT_ID="${CONT_MAP[$CONT_SEL]}"
+                    read -p "请输入选择 [1-$((i-1))] (默认1): " CONT_SEL
+                    CONT_SEL=${CONT_SEL:-1}
+                    if ! [[ "$CONT_SEL" =~ ^[0-9]+$ ]] || [ "$CONT_SEL" -lt 1 ] || [ "$CONT_SEL" -ge "$i" ]; then
+                        echo -e "\033[31m❌ 输入非法，请输入列表中的正确数字。\033[0m"
+                        continue
+                    fi
+                    CONT_ID="${CONT_MAP[$CONT_SEL]}"
+                    step=1
+                    ;;
+                1)
+                    echo -e "\n\033[36m📍 【第一级】正在检索 [$CONT_ID] 战区下的国家/地区...\033[0m"
+                    jq -r ".continents[] | select(.id==\"$CONT_ID\") | .countries[] | \"\(.id)|\(.name)|\(.keyword_file)\"" "${SECURE_TMP}/map.json" > "${SECURE_TMP}/countries.txt"
+                    i=1; COUNTRY_MAP=(); KEYWORD_MAP=()
+                    echo "  0) 🔙 返回上一级 (重新选择战区)"
+                    while IFS="|" read -r c_id c_name k_file; do
+                        echo "  $i) $c_name"
+                        COUNTRY_MAP[$i]="$c_id"
+                        KEYWORD_MAP[$i]="$k_file"
+                        ((i++))
+                    done < "${SECURE_TMP}/countries.txt"
 
-        echo -e "\n\033[36m📍 【第一级】正在检索 [$CONT_ID] 战区下的国家/地区...\033[0m"
-        jq -r ".continents[] | select(.id==\"$CONT_ID\") | .countries[] | \"\(.id)|\(.name)|\(.keyword_file)\"" "${SECURE_TMP}/map.json" > "${SECURE_TMP}/countries.txt"
-        i=1; COUNTRY_MAP=(); KEYWORD_MAP=()
-        while IFS="|" read -r c_id c_name k_file; do
-            echo "  $i) $c_name"
-            COUNTRY_MAP[$i]="$c_id"
-            KEYWORD_MAP[$i]="$k_file"
-            ((i++))
-        done < "${SECURE_TMP}/countries.txt"
+                    read -p "请输入选择 [0-$((i-1))] (默认1): " C_SEL
+                    C_SEL=${C_SEL:-1}
+                    if [ "$C_SEL" -eq 0 ]; then
+                        step=0
+                        continue
+                    fi
+                    if ! [[ "$C_SEL" =~ ^[0-9]+$ ]] || [ "$C_SEL" -lt 1 ] || [ "$C_SEL" -ge "$i" ]; then
+                        echo -e "\033[31m❌ 输入非法，请输入列表中的正确数字。\033[0m"
+                        continue
+                    fi
+                    COUNTRY_ID="${COUNTRY_MAP[$C_SEL]}"
+                    KEYWORD_FILE="${KEYWORD_MAP[$C_SEL]}"
+                    REGION_CODE="$COUNTRY_ID" 
+                    step=2
+                    ;;
+                2)
+                    echo -e "\n\033[36m📍 【第二级】正在检索 [$COUNTRY_ID] 的行政区数据...\033[0m"
+                    jq -r ".continents[] | select(.id==\"$CONT_ID\") | .countries[] | select(.id==\"$COUNTRY_ID\") | .states[] | \"\(.id)|\(.name)\"" "${SECURE_TMP}/map.json" > "${SECURE_TMP}/states.txt"
+                    STATE_COUNT=$(wc -l < "${SECURE_TMP}/states.txt")
 
-        read -p "请输入选择 [1-$((i-1))] (默认1): " C_SEL
-        C_SEL=${C_SEL:-1}
-        COUNTRY_ID="${COUNTRY_MAP[$C_SEL]}"
-        KEYWORD_FILE="${KEYWORD_MAP[$C_SEL]}"
-        REGION_CODE="$COUNTRY_ID" 
+                    if [ "$STATE_COUNT" -eq 1 ]; then
+                        IFS="|" read -r STATE_ID STATE_NAME < "${SECURE_TMP}/states.txt"
+                        echo -e "\033[32m💡 该国家下仅有单一配置 [$STATE_NAME]，已自动跃迁。\033[0m"
+                        step=3
+                        continue
+                    else
+                        i=1; STATE_MAP=()
+                        echo "  0) 🔙 返回上一级 (重新选择国家)"
+                        while IFS="|" read -r s_id s_name; do
+                            echo "  $i) $s_name"
+                            STATE_MAP[$i]="$s_id"
+                            ((i++))
+                        done < "${SECURE_TMP}/states.txt"
+                        read -p "请输入选择 [0-$((i-1))] (默认1): " S_SEL
+                        S_SEL=${S_SEL:-1}
+                        if [ "$S_SEL" -eq 0 ]; then
+                            step=1
+                            continue
+                        fi
+                        if ! [[ "$S_SEL" =~ ^[0-9]+$ ]] || [ "$S_SEL" -lt 1 ] || [ "$S_SEL" -ge "$i" ]; then
+                            echo -e "\033[31m❌ 输入非法，请输入列表中的正确数字。\033[0m"
+                            continue
+                        fi
+                        STATE_ID="${STATE_MAP[$S_SEL]}"
+                        step=3
+                    fi
+                    ;;
+                3)
+                    echo -e "\n\033[36m📍 【第三级】请锁定具体城市节点:\033[0m"
+                    jq -r ".continents[] | select(.id==\"$CONT_ID\") | .countries[] | select(.id==\"$COUNTRY_ID\") | .states[] | select(.id==\"$STATE_ID\") | .cities[] | \"\(.id)|\(.name)\"" "${SECURE_TMP}/map.json" > "${SECURE_TMP}/cities.txt"
+                    CITY_COUNT=$(wc -l < "${SECURE_TMP}/cities.txt")
 
-        echo -e "\n\033[36m📍 【第二级】正在检索 [$COUNTRY_ID] 的行政区数据...\033[0m"
-        jq -r ".continents[] | select(.id==\"$CONT_ID\") | .countries[] | select(.id==\"$COUNTRY_ID\") | .states[] | \"\(.id)|\(.name)\"" "${SECURE_TMP}/map.json" > "${SECURE_TMP}/states.txt"
-        STATE_COUNT=$(wc -l < "${SECURE_TMP}/states.txt")
-
-        if [ "$STATE_COUNT" -eq 1 ]; then
-            IFS="|" read -r STATE_ID STATE_NAME < "${SECURE_TMP}/states.txt"
-            echo -e "\033[32m💡 该国家下仅有单一配置 [$STATE_NAME]，已自动跃迁。\033[0m"
-        else
-            i=1; STATE_MAP=()
-            while IFS="|" read -r s_id s_name; do
-                echo "  $i) $s_name"
-                STATE_MAP[$i]="$s_id"
-                ((i++))
-            done < "${SECURE_TMP}/states.txt"
-            read -p "请输入选择 [1-$((i-1))] (默认1): " S_SEL
-            S_SEL=${S_SEL:-1}
-            STATE_ID="${STATE_MAP[$S_SEL]}"
-        fi
-
-        echo -e "\n\033[36m📍 【第三级】请锁定具体城市节点:\033[0m"
-        jq -r ".continents[] | select(.id==\"$CONT_ID\") | .countries[] | select(.id==\"$COUNTRY_ID\") | .states[] | select(.id==\"$STATE_ID\") | .cities[] | \"\(.id)|\(.name)\"" "${SECURE_TMP}/map.json" > "${SECURE_TMP}/cities.txt"
-        CITY_COUNT=$(wc -l < "${SECURE_TMP}/cities.txt")
-
-        if [ "$CITY_COUNT" -eq 1 ]; then
-            IFS="|" read -r CITY_ID CITY_NAME < "${SECURE_TMP}/cities.txt"
-            echo -e "\033[32m💡 该区域下仅有单一城市 [$CITY_NAME]，已自动锁定。\033[0m"
-        else
-            i=1; CITY_MAP=(); CITY_NAME_MAP=()
-            while IFS="|" read -r c_id c_name; do
-                echo "  $i) $c_name"
-                CITY_MAP[$i]="$c_id"
-                CITY_NAME_MAP[$i]="$c_name"
-                ((i++))
-            done < "${SECURE_TMP}/cities.txt"
-            read -p "请输入选择 [1-$((i-1))] (默认1): " CI_SEL
-            CI_SEL=${CI_SEL:-1}
-            CITY_ID="${CITY_MAP[$CI_SEL]}"
-            CITY_NAME="${CITY_NAME_MAP[$CI_SEL]}"
-        fi
+                    if [ "$CITY_COUNT" -eq 1 ]; then
+                        IFS="|" read -r CITY_ID CITY_NAME < "${SECURE_TMP}/cities.txt"
+                        echo -e "\033[32m💡 该区域下仅有单一城市 [$CITY_NAME]，已自动锁定。\033[0m"
+                        step=4
+                        continue
+                    else
+                        i=1; CITY_MAP=(); CITY_NAME_MAP=()
+                        echo "  0) 🔙 返回上一级 (重新选择行政区)"
+                        while IFS="|" read -r c_id c_name; do
+                            echo "  $i) $c_name"
+                            CITY_MAP[$i]="$c_id"
+                            CITY_NAME_MAP[$i]="$c_name"
+                            ((i++))
+                        done < "${SECURE_TMP}/cities.txt"
+                        read -p "请输入选择 [0-$((i-1))] (默认1): " CI_SEL
+                        CI_SEL=${CI_SEL:-1}
+                        if [ "$CI_SEL" -eq 0 ]; then
+                            if [ "$STATE_COUNT" -eq 1 ]; then
+                                step=1
+                            else
+                                step=2
+                            fi
+                            continue
+                        fi
+                        if ! [[ "$CI_SEL" =~ ^[0-9]+$ ]] || [ "$CI_SEL" -lt 1 ] || [ "$CI_SEL" -ge "$i" ]; then
+                            echo -e "\033[31m❌ 输入非法，请输入列表中的正确数字。\033[0m"
+                            continue
+                        fi
+                        CITY_ID="${CITY_MAP[$CI_SEL]}"
+                        CITY_NAME="${CITY_NAME_MAP[$CI_SEL]}"
+                        step=4
+                    fi
+                    ;;
+            esac
+        done
 
         rm -f "${SECURE_TMP}/map.json" "${SECURE_TMP}/continents.txt" "${SECURE_TMP}/countries.txt" "${SECURE_TMP}/states.txt" "${SECURE_TMP}/cities.txt"
 
@@ -143,9 +197,6 @@ do_interactive_setup() {
         ENABLE_TRUST="true"
 
         echo -e "\n[4/7] 是否接入 Master 司令部进行远程联控？ (y/n)"
-        # ----------------------------------------------------------
-        # [优化项 1] 默认选择改为 y
-        # ----------------------------------------------------------
         read -p "请输入选择 [y/n] (默认y): " TG_CHOICE
         TG_CHOICE=${TG_CHOICE:-y}
         
@@ -248,9 +299,8 @@ do_final_report() {
             OLD_VERSION=$(grep "^AGENT_VERSION=" "$CONFIG_FILE" | cut -d'"' -f2)
             [ -z "$OLD_VERSION" ] && OLD_VERSION="3.3.1"
             
-            # [v4.2.2 跨代升级防线] 只要是从低于 4.2.2 的版本升上来，强制要求用户点击注册指令同步多宿主弹匣
             if version_lt "$OLD_VERSION" "4.2.2"; then
-                echo -e "\n📡 [路由枢纽] 正在执行容灾架构重组 (v${OLD_VERSION} -> v${TARGET_VERSION})...."
+                echo -e "\n📡 [路由枢纽] 正在执行容灾架构重组 (v${OLD_VERSION} -> v${TARGET_VERSION})..."
                 TEXT_MSG="✨ *IP-Sentinel 容灾引擎热更新完成！*
 📍 节点：\`${NODE_ALIAS}\`
 🌐 养护 IP：\`${SAFE_PUBLIC_IP}\`
@@ -290,10 +340,13 @@ do_final_report() {
         else
             echo -e "\n📡 正在向指挥部发送注册暗号..."
             
+            # [修补重点] 必须转义，否则含有下划线的 SAFE_COMM_IP_ESC 在 Telegram Markdown 中会引发 400 Bad Request
+            SAFE_COMM_IP_ESC=$(echo "$SAFE_COMM_IP" | sed 's/_/\\_/g')
+            
             TEXT_MSG="✨ *IP-Sentinel 部署成功！*
 📍 区域：${REGION_NAME}
 🌐 养护 IP：\`${SAFE_PUBLIC_IP}\`
-📡 容灾 IP：\`${SAFE_COMM_IP}\`
+📡 容灾 IP：\`${SAFE_COMM_IP_ESC}\`
 🔌 端口：\`${AGENT_PORT}\`
 
 🔑 *请点击下方指令复制并回复给机器人：*
@@ -323,9 +376,6 @@ do_show_summary() {
     if [[ -n "$TG_TOKEN" ]]; then
         echo "📡 Webhook 监听已启动 (端口: $AGENT_PORT) 并向中枢发送了注册请求。"
         
-        # ----------------------------------------------------------
-        # [优化项 2] 自动化底层防火墙双栈对空通道放行
-        # ----------------------------------------------------------
         echo -e "\n🛡️ \033[36m[🔥 防火墙自动化操纵] 正在检测本地防线并全开双栈对空通道...\033[0m"
         
         if command -v ufw >/dev/null 2>&1 && ufw status | grep -qw active; then
